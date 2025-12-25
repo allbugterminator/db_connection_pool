@@ -1,4 +1,3 @@
-// odbc_mysql.cpp
 #include <sql.h>
 #include <sqlext.h>
 #include <sqltypes.h>
@@ -38,17 +37,13 @@ public:
         // 分配环境句柄
         if (SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &env) != SQL_SUCCESS)
             return false;
-            
-        std::cout << "===========000============" << dsn << std::endl;
+
         // 设置ODBC版本
         SQLSetEnvAttr(env, SQL_ATTR_ODBC_VERSION, (SQLPOINTER)SQL_OV_ODBC3, 0);
-        std::cout << "===========111============" << dsn << std::endl;
         
         // 分配连接句柄
         if (SQLAllocHandle(SQL_HANDLE_DBC, env, &dbc) != SQL_SUCCESS)
             return false;
-
-        std::cout << "===========222============" << dsn << std::endl;
         
         // 建立连接
         SQLRETURN ret = SQLConnect(dbc, 
@@ -56,13 +51,11 @@ public:
                                   (SQLCHAR*)user.c_str(), SQL_NTS,
                                   (SQLCHAR*)pass.c_str(), SQL_NTS);
         
-        std::cout << "===========333============" << dsn << std::endl;
         if (ret != SQL_SUCCESS && ret != SQL_SUCCESS_WITH_INFO) {
             checkError(ret, "Connection");
             return false;
         }
         
-        std::cout << "===========444============" << dsn << std::endl;
 
         // 分配语句句柄
         if (SQLAllocHandle(SQL_HANDLE_STMT, dbc, &stmt) != SQL_SUCCESS)
