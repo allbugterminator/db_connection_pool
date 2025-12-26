@@ -301,23 +301,78 @@ private:
     std::vector<Row> rows_;
 };
 
+/**
+ * @brief 数据库类型枚举
+ * 
+ * 当前仅支持主流关系型数据库
+ */
+enum class DatabaseType {
+    // ==================== 关系型数据库 ====================
+    UNKNOWN = 0,           ///< 未知数据库类型
+    
+    // MySQL系列
+    MYSQL = 100,           ///< MySQL数据库
+    MARIADB = 101,         ///< MariaDB数据库
+    PERCONA = 102,         ///< Percona Server
+    
+    // PostgreSQL系列
+    POSTGRESQL = 200,      ///< PostgreSQL数据库
+    GREENPLUM = 201,       ///< Greenplum数据库
+    COCKROACHDB = 202,     ///< CockroachDB
+    
+    // SQL Server系列
+    SQL_SERVER = 300,      ///< Microsoft SQL Server
+    AZURE_SQL = 301,       ///< Azure SQL Database
+    SYBASE = 302,          ///< Sybase ASE
+    
+    // Oracle系列
+    ORACLE = 400,          ///< Oracle Database
+    
+    // SQLite系列
+    SQLITE = 500,          ///< SQLite数据库
+    
+    // IBM系列
+    DB2 = 600,             ///< IBM DB2
+    INFORMIX = 601,        ///< IBM Informix
+    
+    // 其他关系型数据库
+    CLICKHOUSE = 700,      ///< ClickHouse
+    VERTICA = 701,         ///< Vertica
+    SNOWFLAKE = 702,       ///< Snowflake
+};
+
 // 连接配置
 struct ConnectionConfig {
-    std::string dsn;
+    std::string driver;
     std::string username;
     std::string password;
     std::string database;
     std::string host;
+    std::string charset;
     unsigned int port = 0;
     unsigned int timeout = 30;  // 连接超时(秒)
     bool auto_commit = true;
+    bool ssl = false;
+    DatabaseType databaseType = DatabaseType::UNKNOWN;
     
     // 构建连接字符串
     std::string to_connection_string() const {
         std::ostringstream oss;
+        if (databaseType == DatabaseType::UNKNOWN) {
+            throw std::runtime_error("database type is unknown.");
+        }
         
-        if (!dsn.empty()) {
-            oss << "DSN=" << dsn << ";";
+        if (!driver.empty()) {
+            oss << "DRIVER={" << driver << "};";
+        }
+        if (!host.empty()) {
+            oss << "SERVER=" << host << ";";
+        }
+        if (port > 0) {
+            oss << "PORT=" << port << ";";
+        }
+        if (!database.empty()) {
+            oss << "DATABASE=" << database << ";";
         }
         if (!username.empty()) {
             oss << "UID=" << username << ";";
@@ -325,18 +380,24 @@ struct ConnectionConfig {
         if (!password.empty()) {
             oss << "PWD=" << password << ";";
         }
-        if (!database.empty()) {
-            oss << "DATABASE=" << database << ";";
+
+        // 添加可选参数
+        if (!charset.empty()) {
+            oss << "CHARSET=" << charset << ";";
         }
-        if (!host.empty()) {
-            oss << "SERVER=" << host;
-            if (port > 0) {
-                oss << "," << port;
-            }
-            oss << ";";
+        if (timeout > 0) {
+            oss << "ConnectionTimeout=" << timeout << ";";
+        }
+        if (ssl) {
+            oss << "SSL Mode=REQUIRED;";
         }
         
-        oss << "TIMEOUT=" << timeout << ";";
+        // 数据库特定选项
+        if (databaseType == DatabaseType::MYSQL || databaseType == DatabaseType::MARIADB) {
+            oss << "OPTION=3;";  // 启用多语句和长缓冲区
+        } else if (databaseType == DatabaseType::POSTGRESQL) {
+            oss << "sslmode=require;";
+        }
         
         return oss.str();
     }
@@ -397,7 +458,7 @@ public:
             // 2. 设置ODBC版本
             env_handle_->check(
                 SQLSetEnvAttr(env_handle_->get(), SQL_ATTR_ODBC_VERSION, 
-                            (SQLPOINTER)SQL_OV_ODBC3, 0),
+                            (void*)SQL_OV_ODBC3, 0),
                 "Set ODBC version"
             );
             
@@ -410,27 +471,36 @@ public:
             
             // 5. 建立连接
             std::string conn_str = config.to_connection_string();
+            conn_str = "DRIVER={MariaDB};"
+                          "SERVER=127.0.0.1;"
+                          "DATABASE=testdb;"
+                          "UID=sdba;"
+                          "PWD=123456;"
+                          "PORT=3306;"
+                          "CHARSET=utf8;"
+                          "OPTION=3;";
+            SQLCHAR outstr[1024];
+            SQLSMALLINT outstrlen;
             SQLRETURN ret = SQLDriverConnect(
                 conn_handle_->get(),
                 nullptr,
                 (SQLCHAR*)conn_str.c_str(),
                 SQL_NTS,
-                nullptr,
-                0,
-                nullptr,
+                outstr, 
+                sizeof(outstr), 
+                &outstrlen,
                 SQL_DRIVER_COMPLETE
             );
-            
+
             if (!SQL_SUCCEEDED(ret)) {
                 throw OdbcException("Failed to connect to database", 
                                    SQL_HANDLE_DBC, conn_handle_->get());
             }
-            
+            connected_ = true;
+            auto_commit_ = config.auto_commit;
             // 6. 设置自动提交
             set_auto_commit(config.auto_commit);
             
-            connected_ = true;
-            auto_commit_ = config.auto_commit;
             
             std::cout << "Connected to database successfully" << std::endl;
             
