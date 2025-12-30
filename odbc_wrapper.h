@@ -471,14 +471,6 @@ public:
             
             // 5. 建立连接
             std::string conn_str = config.to_connection_string();
-            conn_str = "DRIVER={MariaDB};"
-                          "SERVER=127.0.0.1;"
-                          "DATABASE=testdb;"
-                          "UID=sdba;"
-                          "PWD=123456;"
-                          "PORT=3306;"
-                          "CHARSET=utf8;"
-                          "OPTION=3;";
             SQLCHAR outstr[1024];
             SQLSMALLINT outstrlen;
             SQLRETURN ret = SQLDriverConnect(
