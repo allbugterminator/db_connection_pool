@@ -14,6 +14,8 @@ ConnectionPool::ConnectionPool(const ConnectionPoolConfig& config)
             idle_connections_.push(std::move(conn));
             total_connections_++;
         }
+
+        std::cout << "ConnectionPool init, idl_connections size: " << total_connections_ << std::endl;
     } catch (const std::exception& e) {
         std::cerr << "Warning: Failed to create initial connections: " 
                   << e.what() << std::endl;
@@ -55,7 +57,7 @@ void ConnectionPool::shutdown() {
     active_connections_.clear();
 }
 
-std::unique_ptr<Connection> ConnectionPool::get_connection(
+PoolConnectionHandle::Ptr ConnectionPool::get_connection(
     std::chrono::milliseconds timeout) {
     
     if (shutdown_) {
@@ -68,28 +70,44 @@ std::unique_ptr<Connection> ConnectionPool::get_connection(
     
     while (!shutdown_) {
         // 尝试从池中获取连接
-        auto conn = borrow_from_pool();
-        if (conn) {
+        auto connHandle = borrow_from_pool();
+        if (connHandle) {
             waiting_requests_--;
+            std::cout << "success to get conn handle" << std::endl;
             
             // 检查连接是否有效
-            if (config_.test_on_borrow && !conn->is_connected()) {
+            if (config_.test_on_borrow && !connHandle->is_connected()) {
                 // 连接无效，尝试创建新连接
                 try {
-                    conn = std::make_unique<Connection>(config_.connection_config);
-                    return conn;
+                    auto conn = std::make_unique<Connection>(config_.connection_config);
+                    // ✅ 使用 weak_ptr 捕获 ConnectionPool
+                    auto weak_pool = weak_from_this();
+                    
+                    // ✅ 使用 shared_ptr 捕获 PooledConnection
+                    auto release_func = [weak_pool](Connection::Ptr released_conn) {
+                        if (auto pool = weak_pool.lock()) {
+                            pool->return_connection(std::move(released_conn));
+                        } else {
+                            // ConnectionPool 已被销毁，连接会被自动清理
+                            // 可以记录日志或什么都不做
+                            std::cout << "connection pool already release." << std::endl;
+                        }
+                    };
+
+                    return std::make_unique<PoolConnectionHandle>(std::move(conn), std::move(release_func));
                 } catch (const std::exception& e) {
                     throw std::runtime_error(
                         std::string("Failed to create valid connection: ") + e.what());
                 }
             }
             
-            return conn;
+            return connHandle;
         }
         
         // 检查是否超时
         auto elapsed = std::chrono::steady_clock::now() - start_time;
         if (elapsed >= timeout) {
+            std::cout << "Timeout waiting for database connection" << std::endl;
             waiting_requests_--;
             throw std::runtime_error("Timeout waiting for database connection");
         }
@@ -102,30 +120,58 @@ std::unique_ptr<Connection> ConnectionPool::get_connection(
     throw std::runtime_error("Connection pool is shutdown");
 }
 
-std::unique_ptr<Connection> ConnectionPool::borrow_from_pool() {
+PoolConnectionHandle::Ptr ConnectionPool::borrow_from_pool() {
     std::lock_guard<std::mutex> lock(mutex_);
     
+    std::cout << "start borrow_from_pool idl_connections size: " << idle_connections_.size() << std::endl;
     if (!idle_connections_.empty()) {
         // 从空闲队列获取连接
         auto conn = std::move(idle_connections_.front());
         idle_connections_.pop();
         
         if (conn->is_connected()) {
-            active_connections_.insert(conn.get());
-            return conn;
+            active_connections_.insert(std::move(conn));
+            // ✅ 使用 weak_ptr 捕获 ConnectionPool
+            auto weak_pool = weak_from_this();
+            
+            // ✅ 使用 shared_ptr 捕获 PooledConnection
+            auto release_func = [weak_pool](Connection::Ptr released_conn) {
+                if (auto pool = weak_pool.lock()) {
+                    pool->return_connection(std::move(released_conn));
+                } else {
+                    // ConnectionPool 已被销毁，连接会被自动清理
+                    // 可以记录日志或什么都不做
+                    std::cout << "connection pool already release." << std::endl;
+                }
+            };
+            return std::make_unique<PoolConnectionHandle>(std::move(conn), std::move(release_func));
         } else {
             // 连接无效，减少计数
             total_connections_--;
         }
     }
     
+    std::cout << "start borrow_from_pool total_connections_: " << total_connections_ << "config_.max_connections: " << config_.max_connections << std::endl;
     // 尝试创建新连接
     if (total_connections_ < config_.max_connections) {
         try {
             auto conn = std::make_unique<Connection>(config_.connection_config);
-            active_connections_.insert(conn.get());
+            active_connections_.insert(std::move(conn));
             total_connections_++;
-            return conn;
+            // ✅ 使用 weak_ptr 捕获 ConnectionPool
+            auto weak_pool = weak_from_this();
+            
+            // ✅ 使用 shared_ptr 捕获 PooledConnection
+            auto release_func = [weak_pool](Connection::Ptr released_conn) {
+                if (auto pool = weak_pool.lock()) {
+                    pool->return_connection(std::move(released_conn));
+                } else {
+                    // ConnectionPool 已被销毁，连接会被自动清理
+                    // 可以记录日志或什么都不做
+                    std::cout << "connection pool already release." << std::endl;
+                }
+            };
+            return std::make_unique<PoolConnectionHandle>(std::move(conn), std::move(release_func));
         } catch (const std::exception&) {
             // 创建失败，返回空指针
         }
@@ -135,6 +181,7 @@ std::unique_ptr<Connection> ConnectionPool::borrow_from_pool() {
 }
 
 void ConnectionPool::return_connection(std::unique_ptr<Connection> conn) {
+    std::cout << "========return_connection=========" << std::endl;
     if (!conn || shutdown_) {
         return;
     }
@@ -142,7 +189,7 @@ void ConnectionPool::return_connection(std::unique_ptr<Connection> conn) {
     std::lock_guard<std::mutex> lock(mutex_);
     
     // 从活跃集合中移除
-    active_connections_.erase(conn.get());
+    active_connections_.erase(conn);
     
     // 检查连接是否仍然有效
     if (config_.test_on_return && !conn->is_connected()) {
@@ -158,6 +205,8 @@ void ConnectionPool::return_connection(std::unique_ptr<Connection> conn) {
     
     // 将连接放回空闲队列
     // conn->update_last_used();
+
+    std::cout << "resturn_connection idle_connections_ size: " << idle_connections_.size() << std::endl;
     idle_connections_.push(std::move(conn));
     
     // 通知等待的线程

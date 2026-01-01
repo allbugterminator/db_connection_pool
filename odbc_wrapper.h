@@ -406,6 +406,7 @@ struct ConnectionConfig {
 // 主连接类
 class Connection {
 public:
+    using Ptr = std::unique_ptr<Connection>;
     Connection() = default;
     
     explicit Connection(const ConnectionConfig& config) {
@@ -494,7 +495,7 @@ public:
             set_auto_commit(config.auto_commit);
             
             
-            std::cout << "Connected to database successfully" << std::endl;
+            // std::cout << "Connected to database successfully" << std::endl;
             
         } catch (const std::exception& e) {
             connected_ = false;
@@ -511,7 +512,7 @@ public:
                 SQLDisconnect(conn_handle_->get());
             }
             connected_ = false;
-            std::cout << "Disconnected from database" << std::endl;
+            // std::cout << "Disconnected from database" << std::endl;
         } catch (const std::exception& e) {
             std::cerr << "Error during disconnect: " << e.what() << std::endl;
             throw;

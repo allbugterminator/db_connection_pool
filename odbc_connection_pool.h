@@ -31,11 +31,87 @@ struct ConnectionPoolConfig {
     ConnectionConfig connection_config;
 };
 
+// RAII连接句柄
+class PoolConnectionHandle {
+public:
+    using Ptr = std::unique_ptr<PoolConnectionHandle>;
+    using ReleaseFunc = std::function<void(Connection::Ptr)>;
+
+    PoolConnectionHandle(Connection::Ptr conn, ReleaseFunc release_func)
+        : conn_(std::move(conn)) {
+        release_func_ = std::move(release_func);
+        std::cout << "======PoolConnectionHandle, conn_: " << (conn_ == nullptr) << ", release_func_:" << (release_func_ == nullptr) << std::endl;
+    }
+    
+    ~PoolConnectionHandle() {
+        try
+        {
+            std::cout << "~PoolConnectionHandle, conn_: " << (conn_ == nullptr) << ", release_func_:" << (release_func_ == nullptr) << std::endl;
+            if (conn_) {
+                release_func_(std::move(conn_));
+            }
+        }
+        catch(const std::exception& e)
+        {
+            std::cerr << "~PoolConnectionHandle, err: " << e.what() << std::endl;;
+        }
+        
+    }
+    
+    // 禁止拷贝
+    PoolConnectionHandle(const PoolConnectionHandle&) = delete;
+    PoolConnectionHandle& operator=(const PoolConnectionHandle&) = delete;
+
+    // 允许移动
+    PoolConnectionHandle(PoolConnectionHandle&& other) noexcept
+        : conn_(std::move(other.conn_))
+        , release_func_(std::move(other.release_func_)) {
+        other.release_func_ = nullptr;
+    }
+    
+    PoolConnectionHandle& operator=(PoolConnectionHandle&& other) noexcept {
+        if (this != &other) {
+            conn_ = std::move(other.conn_);
+            release_func_ = std::move(other.release_func_);
+            other.release_func_ = nullptr;
+        }
+        return *this;
+    }
+
+    bool is_connected() {
+        if (!conn_) {
+            throw std::runtime_error("Connection handle is invalid");
+        }
+        return conn_->is_connected();
+    }
+
+    size_t execute(const std::string& sql) {
+        if (!conn_) {
+            throw std::runtime_error("Connection handle is invalid");
+        }
+        return conn_->execute(sql);
+    }
+
+    ResultSet query(const std::string& sql) {
+        if (!conn_) {
+            throw std::runtime_error("Connection handle is invalid");
+        }
+        return conn_->query(sql);
+    }
+    
+    explicit operator bool() const { return conn_ != nullptr; }
+    
+private:
+    Connection::Ptr conn_;
+    ReleaseFunc release_func_;
+};
+
 /**
  * @brief 连接池主类
  */
-class ConnectionPool {
+class ConnectionPool : public std::enable_shared_from_this<ConnectionPool> {
 public:
+    using Ptr = std::shared_ptr<ConnectionPool>;
     explicit ConnectionPool(const ConnectionPoolConfig& config);
     ~ConnectionPool();
     
@@ -46,7 +122,7 @@ public:
     /**
      * @brief 获取连接（支持超时）
      */
-    std::unique_ptr<Connection> get_connection(
+    PoolConnectionHandle::Ptr get_connection(
         std::chrono::milliseconds timeout = std::chrono::milliseconds(5000));
     
     /**
@@ -90,14 +166,14 @@ private:
     /**
      * @brief 从池中获取空闲连接（内部使用）
      */
-    std::unique_ptr<Connection> borrow_from_pool();
+    PoolConnectionHandle::Ptr borrow_from_pool();
     
     // 连接池配置
     ConnectionPoolConfig config_;
     
     // 连接存储
-    std::queue<std::unique_ptr<Connection>> idle_connections_;
-    std::unordered_set<Connection*> active_connections_;
+    std::queue<Connection::Ptr> idle_connections_;
+    std::unordered_set<Connection::Ptr> active_connections_;
     
     // 同步原语
     mutable std::mutex mutex_;
