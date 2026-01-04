@@ -67,7 +67,7 @@ public:
                         odbc::Connection conn(config.connection_config);
                         
                         // 执行简单查询
-                        auto result = conn.query("SELECT * FROM users;");
+                        auto result = conn.query("SELECT * FROM users where id = 5000;");
                         if (!result.empty()) {
                             metrics.success_count++;
                         } else {
@@ -117,7 +117,7 @@ public:
                         auto conn = pool->get_connection();
                         
                         // 执行相同的查询
-                        auto result = conn->query("SELECT * FROM users;");
+                        auto result = conn->query("SELECT * FROM users where id = 5000;");
                         if (!result.empty()) {
                             metrics.success_count++;
                         } else {
