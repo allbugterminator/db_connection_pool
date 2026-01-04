@@ -64,18 +64,15 @@ public:
                         auto start = std::chrono::steady_clock::now();
                         
                         // 每次创建新连接
-                        odbc::Connection conn;
-                        conn.connect(config.connection_config);
+                        odbc::Connection conn(config.connection_config);
                         
                         // 执行简单查询
-                        auto result = conn.query("SELECT 1 as test_value");
+                        auto result = conn.query("SELECT * FROM users;");
                         if (!result.empty()) {
                             metrics.success_count++;
                         } else {
                             metrics.error_count++;
                         }
-                        
-                        conn.disconnect();
                         
                     } catch (const std::exception& e) {
                         metrics.error_count++;
@@ -120,7 +117,7 @@ public:
                         auto conn = pool->get_connection();
                         
                         // 执行相同的查询
-                        auto result = conn->query("SELECT 1 as test_value");
+                        auto result = conn->query("SELECT * FROM users;");
                         if (!result.empty()) {
                             metrics.success_count++;
                         } else {
@@ -191,7 +188,7 @@ void load_test(LoadTestType loadType) {
     config.connection_config.driver = "MariaDB";
     config.connection_config.host = "127.0.0.1";
     config.connection_config.port = 3306;
-    config.connection_config.username = "testuser";
+    config.connection_config.username = "sdba";
     config.connection_config.password = "123456";
     config.connection_config.database = "testdb";
     config.connection_config.charset = "utf8";
@@ -241,9 +238,7 @@ void load_test(LoadTestType loadType) {
     config.use_connection_pool = true;
     config.test_name += " - 连接池";
 
-    std::cout << "=========start to test pool=======" << std::endl;
     ConnectionPoolTest::run_test(config, pool_metrics);
-    std::cout << "=========end to test pool=======" << std::endl;
     pool_metrics.print_results(config);
     
     // 性能对比
@@ -264,7 +259,7 @@ public:
     static void start_monitor() {
         std::thread monitor_thread([]() {
             while (true) {
-                std::this_thread::sleep_for(std::chrono::seconds(5));
+                std::this_thread::sleep_for(std::chrono::seconds(20));
                 print_memory_usage();
             }
         });
@@ -272,7 +267,11 @@ public:
     }
 };
 
-int main() {
+int main(int argv, char* argc[]) {
+    if (argv < 2) {
+        std::cout << "param is error!" << std::endl;
+        return 2;
+    }
     std::cout << "开始ODBC连接池全方位压力测试..." << std::endl;
     
     try {
@@ -280,11 +279,23 @@ int main() {
         ResourceMonitor::start_monitor();
         
         // 执行不同负载测试
-        load_test(LoadTestType::LightLoadTest);
-        load_test(LoadTestType::MediumLoadTest);
-        load_test(LoadTestType::HeavyLoadTest);
+        switch (LoadTestType(std::atoi(argc[1])))
+        {
+        case LoadTestType::LightLoadTest:
+            load_test(LoadTestType::LightLoadTest);
+            break;
         
-        std::cout << "\n=== 所有测试完成 ===" << std::endl;
+        case LoadTestType::MediumLoadTest:
+            load_test(LoadTestType::MediumLoadTest);
+            break;
+        
+        case LoadTestType::HeavyLoadTest:
+            load_test(LoadTestType::HeavyLoadTest);
+            break;
+        
+        default:
+            break;
+        }
         
     } catch (const std::exception& e) {
         std::cerr << "测试过程中发生错误: " << e.what() << std::endl;

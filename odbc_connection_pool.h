@@ -38,16 +38,14 @@ public:
     using ReleaseFunc = std::function<void(Connection::Ptr)>;
 
     PoolConnectionHandle(Connection::Ptr conn, ReleaseFunc release_func)
-        : conn_(std::move(conn)) {
-        release_func_ = std::move(release_func);
-        std::cout << "======PoolConnectionHandle, conn_: " << (conn_ == nullptr) << ", release_func_:" << (release_func_ == nullptr) << std::endl;
+        : conn_(std::move(conn))
+        , release_func_(std::move(release_func)) {
     }
     
     ~PoolConnectionHandle() {
         try
         {
-            std::cout << "~PoolConnectionHandle, conn_: " << (conn_ == nullptr) << ", release_func_:" << (release_func_ == nullptr) << std::endl;
-            if (conn_) {
+            if (conn_ && release_func_) {
                 release_func_(std::move(conn_));
             }
         }
@@ -66,13 +64,24 @@ public:
     PoolConnectionHandle(PoolConnectionHandle&& other) noexcept
         : conn_(std::move(other.conn_))
         , release_func_(std::move(other.release_func_)) {
+        other.conn_ = nullptr;
         other.release_func_ = nullptr;
     }
     
     PoolConnectionHandle& operator=(PoolConnectionHandle&& other) noexcept {
         if (this != &other) {
+            // 先释放当前资源
+            if (conn_ && release_func_) {
+                try {
+                    release_func_(std::move(conn_));
+                } catch (...) {
+                    // 忽略异常
+                }
+            }
+
             conn_ = std::move(other.conn_);
             release_func_ = std::move(other.release_func_);
+            other.conn_ = nullptr;
             other.release_func_ = nullptr;
         }
         return *this;
@@ -97,6 +106,10 @@ public:
             throw std::runtime_error("Connection handle is invalid");
         }
         return conn_->query(sql);
+    }
+
+    std::unique_ptr<Connection::PreparedStatement> prepare(const std::string& sql) {
+        return conn_->prepare(sql);
     }
     
     explicit operator bool() const { return conn_ != nullptr; }
@@ -173,7 +186,6 @@ private:
     
     // 连接存储
     std::queue<Connection::Ptr> idle_connections_;
-    std::unordered_set<Connection::Ptr> active_connections_;
     
     // 同步原语
     mutable std::mutex mutex_;
@@ -182,14 +194,15 @@ private:
     // 状态变量
     std::atomic<size_t> total_connections_{0};
     std::atomic<size_t> waiting_requests_{0};
+    std::atomic<size_t> active_connections_{0};
     std::atomic<bool> shutdown_{false};
     
     // 后台线程
     std::thread cleanup_thread_;
     std::thread health_check_thread_;
     
-    // 友元声明，允许PooledConnection访问return_connection
-    // friend class Connection;
+    // 友元声明，允许Connection访问return_connection
+    friend class Connection;
 };
 
 /**

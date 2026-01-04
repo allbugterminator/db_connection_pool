@@ -702,7 +702,7 @@ public:
         SQLUINTEGER mode = enable ? SQL_AUTOCOMMIT_ON : SQL_AUTOCOMMIT_OFF;
         SQLRETURN ret = SQLSetConnectAttr(conn_handle_->get(), 
                                          SQL_ATTR_AUTOCOMMIT, 
-                                         (SQLPOINTER)mode, 
+                                         (SQLPOINTER)(intptr_t)mode, 
                                          0);
         if (!SQL_SUCCEEDED(ret)) {
             throw OdbcException("Failed to set autocommit mode", 
