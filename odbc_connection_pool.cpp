@@ -121,16 +121,16 @@ PoolConnectionHandle::Ptr ConnectionPool::get_connection(std::chrono::millisecon
 }
 
 PoolConnectionHandle::Ptr ConnectionPool::borrow_from_pool() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
     // std::cout << "start borrow_from_pool idl_connections size: " << idle_connections_.size() << std::endl;
     if (!idle_connections_.empty()) {
         // 从空闲队列获取连接
+        std::unique_lock<std::mutex> lock(mutex_);
         auto conn = std::move(idle_connections_.front());
         idle_connections_.pop();
+
+        lock.unlock();
         
         if (conn && conn->is_connected()) {
-            // ✅ 修复：将连接插入active_connections_
             active_connections_++;
             
             auto weak_pool = weak_from_this();
@@ -187,8 +187,6 @@ void ConnectionPool::return_connection(std::unique_ptr<Connection> conn) {
         return;
     }
     
-    std::lock_guard<std::mutex> lock(mutex_);
-    
     active_connections_--;
     if (shutdown_) {
         // 如果连接池已关闭，直接释放连接
@@ -212,7 +210,10 @@ void ConnectionPool::return_connection(std::unique_ptr<Connection> conn) {
     // conn->update_last_used();
 
     // std::cout << "resturn_connection idle_connections_ size: " << idle_connections_.size() << std::endl;
-    idle_connections_.push(std::move(conn));
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        idle_connections_.push(std::move(conn));
+    }
     
     // 通知等待的线程
     condition_.notify_one();

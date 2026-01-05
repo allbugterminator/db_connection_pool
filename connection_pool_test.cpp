@@ -6,11 +6,13 @@
 #include <atomic>
 #include <iomanip>
 #include <sys/resource.h>
+#include <random>
 
 struct TestConfig {
     int total_queries;           // 总查询次数
     int max_threads;             // 最大线程数
-    int connection_pool_size;     // 连接池大小
+    int min_connections;     // 最小连接数
+    int max_connections;     // 最大连接数
     bool use_connection_pool;    // 是否使用连接池
     std::string test_name;       // 测试名称
 
@@ -54,6 +56,13 @@ public:
     static void run_test(const TestConfig& config, PerformanceMetrics& metrics) {
         std::vector<std::thread> threads;
         int queries_per_thread = config.total_queries / config.max_threads;
+
+        // 1. 创建随机数引擎，使用高精度时间作为种子
+        unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+        std::mt19937_64 generator(seed);  // 使用Mersenne Twister算法
+        
+        // 2. 定义分布范围 [0, 99999]
+        std::uniform_int_distribution<int> distribution(0, 99999);
         
         metrics.start();
         
@@ -61,19 +70,20 @@ public:
             threads.emplace_back([&, queries_per_thread]() {
                 for (int j = 0; j < queries_per_thread; ++j) {
                     try {
-                        auto start = std::chrono::steady_clock::now();
-                        
                         // 每次创建新连接
                         odbc::Connection conn(config.connection_config);
+
+                        int random_num = distribution(generator);
+                        std::string sqlStr = "SELECT * FROM users where id = " + std::to_string(random_num);
                         
                         // 执行简单查询
-                        auto result = conn.query("SELECT * FROM users where id = 5000;");
+                        auto result = conn.query(sqlStr);
                         if (!result.empty()) {
                             metrics.success_count++;
                         } else {
                             metrics.error_count++;
                         }
-                        
+
                     } catch (const std::exception& e) {
                         metrics.error_count++;
                     }
@@ -95,8 +105,8 @@ public:
     static void run_test(const TestConfig& config, PerformanceMetrics& metrics) {
         // 配置连接池
         odbc::ConnectionPoolConfig pool_config;
-        pool_config.min_connections = config.connection_pool_size;
-        pool_config.max_connections = config.connection_pool_size;
+        pool_config.min_connections = config.min_connections;
+        pool_config.max_connections = config.max_connections;
         pool_config.connection_timeout = 30;
         pool_config.connection_config = config.connection_config;
         
@@ -105,25 +115,33 @@ public:
         std::vector<std::thread> threads;
         int queries_per_thread = config.total_queries / config.max_threads;
 
+        // 1. 创建随机数引擎，使用高精度时间作为种子
+        unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+        std::mt19937_64 generator(seed);  // 使用Mersenne Twister算法
+        
+        // 2. 定义分布范围 [0, 99999]
+        std::uniform_int_distribution<int> distribution(0, 99999);
+
         metrics.start();
         
         for (int i = 0; i < config.max_threads; ++i) {
             threads.emplace_back([&, queries_per_thread]() {
                 for (int j = 0; j < queries_per_thread; ++j) {
                     try {
-                        auto start = std::chrono::steady_clock::now();
-                        
                         // 从连接池获取连接
                         auto conn = pool->get_connection();
+
+                        int random_num = distribution(generator);
+                        std::string sqlStr = "SELECT * FROM users where id = " + std::to_string(random_num);
                         
                         // 执行相同的查询
-                        auto result = conn->query("SELECT * FROM users where id = 5000;");
+                        auto result = conn->query(sqlStr);
                         if (!result.empty()) {
                             metrics.success_count++;
                         } else {
                             metrics.error_count++;
                         }
-                        
+
                         // 连接自动归还到池中
                     } catch (const std::exception& e) {
                         metrics.error_count++;
@@ -198,27 +216,30 @@ void load_test(LoadTestType loadType) {
     case LoadTestType::LightLoadTest:
         {
             config.total_queries = 1000;
-            config.max_threads = 4;
-            config.connection_pool_size = 10;
-            config.test_name = "轻负载测试(1000次查询)";
+            config.max_threads = 1;
+            config.min_connections = 1;
+            config.max_connections = 20;
+            config.test_name = "单线程测试(1000次查询)";
         }
         break;
 
     case LoadTestType::MediumLoadTest:
         {
-            config.total_queries = 5000;
-            config.max_threads = 8;
-            config.connection_pool_size = 15;
-            config.test_name = "中等负载测试(5000次查询)";
+            config.total_queries = 1000;
+            config.max_threads = 2;
+            config.min_connections = 2;
+            config.max_connections = 20;
+            config.test_name = "两个线程测试(1000次查询)";
         }
         break;
 
     case LoadTestType::HeavyLoadTest:
         {
-            config.total_queries = 10000;
-            config.max_threads = 16;
-            config.connection_pool_size = 20;
-            config.test_name = "高负载压力测试(10000次查询)";
+            config.total_queries = 1000;
+            config.max_threads = 4;
+            config.min_connections = 4;
+            config.max_connections = 20;
+            config.test_name = "多线程测试(1000次查询)";
         }
         break;
     
